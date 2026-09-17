@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: help-portal-go-smoke
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    autoDeploy: true
