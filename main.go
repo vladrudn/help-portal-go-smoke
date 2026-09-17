@@ -127,6 +127,9 @@ func (s *supabase) request(method, path, token string, input any, out any) error
 	}
 	if input != nil {
 		req.Header.Set("Content-Type", "application/json")
+		if method == http.MethodPost || method == http.MethodPatch {
+			req.Header.Set("Prefer", "return=representation")
+		}
 	}
 	if out != nil {
 		req.Header.Set("Accept", "application/json")
