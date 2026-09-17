@@ -1,98 +1,37 @@
 <script>
   import { onMount } from 'svelte'
-
-  let query = ''
-  let sections = []
-  let loading = true
-  let error = ''
-  let formOpen = false
-  let title = ''
-  let summary = ''
-  let saving = false
-
-  async function loadSections() {
-    loading = true
-    error = ''
-    try {
-      const response = await fetch(`/api/sections?q=${encodeURIComponent(query)}`)
-      if (!response.ok) throw new Error('Не вдалося отримати дані.')
-      sections = await response.json()
-    } catch (cause) {
-      error = cause.message
-    } finally {
-      loading = false
-    }
+  let query = '', sections = [], active = null, loading = true, error = '', editorOpen = false, menuOpen = false, saving = false, deleting = false, admin = false, loginOpen = false, login = '', password = '', loggingIn = false
+  let form = blankForm()
+  function blankForm() { return { id: null, title: '', summary: '', body: '## Нова інструкція\n\nОпишіть послідовність дій тут.' } }
+  const esc = (v = '') => v.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')
+  // Only emits markup created below: source Markdown cannot execute HTML or scripts.
+  function markdown(source = '') {
+    let t = esc(source)
+    t = t.replace(/!\[([^\]]*)\]\((\/images\/sections\/[\w-]+\.png)\)/g, '<figure><img src="$2" alt="$1" loading="lazy"><figcaption>$1</figcaption></figure>')
+    t = t.replace(/^### (.+)$/gm, '<h3>$1</h3>').replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    t = t.replace(/^:::callout\{type="(warning|tip)" title="([^"]+)"\}\n?([\s\S]*?)^:::/gm, (_, type, title, body) => `<aside class="callout ${type}"><strong>${title}</strong><p>${body.trim()}</p></aside>`)
+    t = t.replace(/^:::accordion\{title="([^"]+)"\}\n?([\s\S]*?)^:::/gm, (_, title, body) => `<details><summary>${title}</summary><div>${body.trim()}</div></details>`)
+    t = t.replace(/^[-*] (.+)$/gm, '<li>$1</li>').replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
+    t = t.replace(/^\d+\. (.+)$/gm, '<li>$1</li>').replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
+    t = t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`(.+?)`/g, '<code>$1</code>')
+    return t.split(/\n{2,}/).map(b => /^(<h|<ul|<figure|<aside|<details)/.test(b.trim()) ? b : `<p>${b.replace(/\n/g, '<br>')}</p>`).join('')
   }
-
-  async function saveSection() {
-    saving = true
-    error = ''
-    try {
-      const response = await fetch('/api/sections', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, summary })
-      })
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload.error || 'Не вдалося зберегти.')
-      title = ''
-      summary = ''
-      formOpen = false
-      await loadSections()
-    } catch (cause) {
-      error = cause.message
-    } finally {
-      saving = false
-    }
-  }
-
-  onMount(loadSections)
+  async function loadSections() { loading = true; error = ''; try { const r = await fetch(`/api/sections?q=${encodeURIComponent(query)}`); if (!r.ok) throw new Error('Не вдалося завантажити інструкції.'); sections = await r.json(); if (!active || !sections.some(x => x.id === active.id)) active = sections[0] || null } catch (e) { error = e.message } finally { loading = false } }
+  function openEditor(section = null) { form = section ? { ...section } : blankForm(); editorOpen = true; menuOpen = false }
+  async function saveSection() { saving = true; error = ''; try { const r = await fetch(form.id ? `/api/sections/${form.id}` : '/api/sections', { method: form.id ? 'PUT' : 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(form) }); const p = await r.json(); if (!r.ok) throw new Error(p.error || 'Не вдалося зберегти зміни.'); editorOpen = false; await loadSections(); active = p } catch (e) { error = e.message } finally { saving = false } }
+  async function deleteSection() { if (!form.id || !confirm(`Видалити «${form.title}»?`)) return; deleting = true; try { const r = await fetch(`/api/sections/${form.id}`, {method:'DELETE'}); if (!r.ok) throw new Error('Не вдалося видалити інструкцію.'); editorOpen = false; await loadSections() } catch (e) { error = e.message } finally { deleting = false } }
+  async function checkAdmin() { try { const r = await fetch('/api/auth/me'); admin = (await r.json()).admin === true } catch { admin = false } }
+  async function signIn() { loggingIn = true; error = ''; try { const r = await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({login,password})}); const p = await r.json(); if (!r.ok) throw new Error(p.error || 'Не вдалося увійти.'); admin = true; loginOpen = false; password = '' } catch (e) { error = e.message } finally { loggingIn = false } }
+  async function signOut() { await fetch('/api/auth/logout',{method:'POST'}); admin = false; editorOpen = false }
+  function choose(section) { active = section; menuOpen = false; document.querySelector('.reader')?.scrollIntoView({behavior:'smooth',block:'start'}) }
+  onMount(async () => { await loadSections(); await checkAdmin() })
 </script>
 
-<svelte:head><meta name="description" content="Мінімальний help portal для Koyeb" /></svelte:head>
-
+<svelte:head><title>СЕДО · Портал інструкцій</title><meta name="description" content="Практичні інструкції для роботи у СЕДО" /></svelte:head>
+<header class="topbar"><a class="brand" href="/" aria-label="Портал інструкцій СЕДО"><span class="brand-mark">С</span><span>СЕДО<small>ПОРТАЛ ІНСТРУКЦІЙ</small></span></a><button class="menu-toggle" onclick={() => menuOpen = !menuOpen} aria-expanded={menuOpen}>Меню <span>≡</span></button><nav class:open={menuOpen}><a href="#catalog" onclick={() => menuOpen = false}>Каталог</a><a href="#about" onclick={() => menuOpen = false}>Про портал</a>{#if admin}<button class="quiet-button" onclick={() => openEditor()}>+ Додати</button><button class="quiet-button" onclick={signOut}>Вийти</button>{:else}<button class="quiet-button" onclick={() => loginOpen = true}>Вхід редактора</button>{/if}</nav></header>
 <main>
-  <section class="hero">
-    <p class="eyebrow">Go + Chi · Svelte · Koyeb</p>
-    <h1>Портал інструкцій<br /><em>працює.</em></h1>
-    <p class="lede">Мінімальний стенд для перевірки Docker-деплою, API та Svelte-інтерфейсу.</p>
-    <div class="status"><span></span> Сервіс готовий відповідати</div>
-  </section>
-
-  <section class="workspace" aria-label="Інструкції">
-    <div class="toolbar">
-      <label class="search">
-        <span>Пошук</span>
-        <input bind:value={query} oninput={loadSections} placeholder="Наприклад, погодження" />
-      </label>
-      <button class="add" onclick={() => formOpen = !formOpen}>{formOpen ? 'Закрити форму' : '+ Тестовий розділ'}</button>
-    </div>
-
-    {#if formOpen}
-      <form class="test-form" onsubmit={(event) => { event.preventDefault(); saveSection() }}>
-        <label>Назва <input required bind:value={title} maxlength="100" /></label>
-        <label>Короткий опис <input required bind:value={summary} maxlength="240" /></label>
-        <button disabled={saving}>{saving ? 'Збереження…' : 'Додати в пам’ять'}</button>
-        <small>Це демонстраційний API: дані зникнуть після перезапуску контейнера.</small>
-      </form>
-    {/if}
-
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
-    {#if loading}
-      <p class="empty">Завантажуємо інструкції…</p>
-    {:else if sections.length === 0}
-      <p class="empty">За цим запитом інструкцій не знайдено.</p>
-    {:else}
-      <div class="cards">
-        {#each sections as section, index}
-          <article>
-            <p class="number">0{index + 1}</p>
-            <h2>{section.title}</h2>
-            <p>{section.summary}</p>
-            <a href={'#section-' + section.id}>Відкрити <span>→</span></a>
-          </article>
-        {/each}
-      </div>
-    {/if}
-  </section>
+  <section class="masthead" id="about"><div class="mast-copy"><p class="kicker">ВІЙСЬКОВА ЧАСТИНА · ВНУТРІШНЯ БАЗА ЗНАНЬ</p><h1>Робота з СЕДО,<br><em>без зайвих кроків.</em></h1><p class="intro">Практичні інструкції, скріншоти АСКОД і короткі пояснення для щоденної роботи з документами.</p></div><div class="mast-card"><span class="signal"></span><b>Портал онлайн</b><p>Оновлено для внутрішнього використання</p><div class="card-line"><span>01</span><span>ІНСТРУКЦІЇ</span></div></div></section>
+  <section class="portal" id="catalog"><aside class="catalog"><div class="catalog-head"><p class="kicker">НАВІГАЦІЯ</p><h2>Знайдіть потрібне</h2></div><label class="search"><span>⌕</span><input bind:value={query} oninput={loadSections} placeholder="Пошук інструкцій" aria-label="Пошук інструкцій"></label><p class="count">{sections.length} розділи</p><div class="section-list">{#each sections as section, index}<button class:current={active?.id === section.id} onclick={() => choose(section)}><span>0{index + 1}</span><strong>{section.title}</strong><small>{section.summary}</small></button>{/each}</div><button class="new-section" onclick={() => openEditor()}><span>+</span> Нова інструкція</button></aside>
+    <article class="reader" aria-live="polite">{#if loading}<div class="reader-empty">Завантажуємо матеріали…</div>{:else if error}<div class="reader-empty error">{error}</div>{:else if active}<div class="reader-meta"><span>ІНСТРУКЦІЯ</span><span>0{sections.findIndex(x => x.id === active.id) + 1}</span></div><div class="reader-title"><div><h2>{active.title}</h2><p>{active.summary}</p></div><button class="edit" onclick={() => openEditor(active)}>Редагувати <span>↗</span></button></div><div class="markdown">{@html markdown(active.body)}</div><footer class="reader-footer"><span>СЕДО · БАЗА ЗНАНЬ</span><button onclick={() => window.scrollTo({top:0,behavior:'smooth'})}>Нагору ↑</button></footer>{:else}<div class="reader-empty">За цим запитом нічого не знайдено.</div>{/if}</article></section>
 </main>
+{#if editorOpen}<div class="modal-backdrop" role="presentation" onclick={(e) => e.target === e.currentTarget && (editorOpen = false)}><div class="editor" role="dialog" aria-modal="true" aria-labelledby="editor-title"><div class="editor-head"><div><p class="kicker">{form.id ? 'РЕДАГУВАННЯ' : 'НОВА ІНСТРУКЦІЯ'}</p><h2 id="editor-title">{form.id ? 'Внесіть зміни' : 'Створіть розділ'}</h2></div><button class="close" onclick={() => editorOpen = false} aria-label="Закрити">×</button></div><form onsubmit={(e) => {e.preventDefault(); saveSection()}}><label>Назва<input bind:value={form.title} required maxlength="120" placeholder="Наприклад, Вхід у СЕДО"></label><label>Короткий опис<input bind:value={form.summary} required maxlength="240" placeholder="Один рядок про зміст інструкції"></label><label>Текст інструкції <span class="hint">Підтримуються ## заголовки, **жирний**, списки та зображення з /images/sections/…</span><textarea bind:value={form.body} rows="13" placeholder="## Крок 1"></textarea></label><div class="editor-actions">{#if form.id}<button type="button" class="delete" disabled={deleting} onclick={deleteSection}>{deleting ? 'Видаляємо…' : 'Видалити'}</button>{/if}<span></span><button type="button" class="cancel" onclick={() => editorOpen = false}>Скасувати</button><button class="save" disabled={saving}>{saving ? 'Збереження…' : 'Зберегти'}</button></div></form></div></div>{/if}

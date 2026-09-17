@@ -17,6 +17,7 @@ RUN adduser -D -u 10001 appuser
 WORKDIR /app
 COPY --from=backend /help-portal-smoke /app/help-portal-smoke
 COPY --from=frontend /app/web/dist /app/web/dist
+COPY content /app/content
 USER appuser
 ENV PORT=8000
 EXPOSE 8000
